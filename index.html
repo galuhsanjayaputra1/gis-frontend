@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GIS MAP – Galuh (Fixed Edit)</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+    :root {
+        --primary: #0ba395;
+        --primary-dark: #08786d;
+        --bg: #eef5f5;
+        --card: #ffffff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+    body { display: flex; height: 100vh; background: var(--bg); }
+
+    /* MAP / SIDEBAR LAYOUT */
+    #map { flex: 2; height: 100vh; }
+    .sidebar {
+        flex: 1; padding: 22px;
+        background: linear-gradient(180deg, #ffffff 0%, #f6ffff 100%);
+        border-left: 1px solid #d9e6e6; display: flex; flex-direction: column; gap: 20px;
+        box-shadow: -4px 0 14px rgba(0,0,0,0.08);
+    }
+    h2 { color: var(--primary); margin-bottom: 10px; font-weight:700; }
+    .card { padding: 20px; background: var(--card); border-radius: 16px; box-shadow: 0 0 12px rgba(0,0,0,0.08); }
+
+    select, textarea, input {
+        width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #cfcfcf; font-size: 15px; background: #fafafa; margin-bottom: 12px;
+    }
+    button {
+        width: 100%; background: var(--primary); color: white; padding: 12px; font-size: 16px; border-radius: 12px; border: none; cursor: pointer; font-weight:600;
+    }
+    button:hover { background: var(--primary-dark); transform: translateY(-2px); }
+    .btn-danger { background: #d9534f; }
+    .btn-danger:hover { background: #b13e3b; }
+
+    /* MODAL */
+    .modal { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.35); display:none; align-items:center; justify-content:center; backdrop-filter: blur(3px); }
+    .modal-content { background: white; padding:22px; width: 380px; border-radius:18px; }
+    .title-bar { height:6px; width:60px; background:var(--primary); border-radius:4px; margin:0 auto 12px auto; }
+
+    /* NOTIF */
+    .notify { position: fixed; top: 20px; right: -350px; background: var(--primary); color: white; padding: 16px 20px; font-size: 16px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: 0.5s ease; z-index: 9999; }
+    .notify.show { right: 20px; }
+
+    /* ================= LEAFLET POPUP / CLICK FIXES ================= */
+    /* Pastikan elemen di dalam popup dapat diklik */
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-content,
+    .leaflet-popup-tip {
+        pointer-events: auto !important;
+    }
+
+    /* Make inputs/buttons inside leaflet clickable */
+    .leaflet-container a,
+    .leaflet-container button,
+    .leaflet-container input,
+    .leaflet-container textarea {
+        pointer-events: auto !important;
+    }
+
+    .leaflet-popup-content button {
+        cursor: pointer !important;
+        pointer-events: auto !important;
+        z-index: 999999 !important;
+    }
+
+    /* Modal harus di atas (Leaflet popup punya z-index tinggi) */
+    #modalEdit { z-index: 999999 !important; }
+
+    /* optional small styling for popup buttons */
+    .leaflet-popup-content button {
+        border-radius: 10px;
+        padding: 8px 10px;
+        border: none;
+        width: 100%;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+    .leaflet-popup-content .btn-danger {
+        background: #e95757 !important;
+        color: #fff;
+    }
+</style>
+</head>
+<body>
+
+<!-- MAP -->
+<div id="map"></div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+    <div class="card">
+        <h2>🗺️ Tambah Marker</h2>
+        <label><b>Kategori</b></label>
+        <select id="kategori">
+            <option selected disabled>-- Pilih kategori --</option>
+            <option value="Tempat Penting">Tempat Penting</option>
+            <option value="Lokasi Bahaya">Lokasi Bahaya</option>
+            <option value="Catatan Lapangan">Catatan Lapangan</option>
+            <option value="Fasilitas Umum">Fasilitas Umum</option>
+            <option value="Perumahan">Perumahan</option>
+            <option value="Perkantoran">Perkantoran</option>
+            <option value="Sekolah">Sekolah</option>
+            <option value="Rumah Sakit">Rumah Sakit</option>
+            <option value="Lainnya">Lainnya</option>
+        </select>
+
+        <label><b>Catatan</b></label>
+        <textarea id="catatan" rows="4" placeholder="Tulis catatan lokasi..."></textarea>
+
+        <button onclick="simpanMarker()">💾 Simpan</button>
+    </div>
+</div>
+
+<!-- POPUP NOTIF -->
+<div id="notif" class="notify">Marker berhasil disimpan!</div>
+
+<!-- MODAL EDIT -->
+<div class="modal" id="modalEdit">
+    <div class="modal-content">
+        <div class="title-bar"></div>
+        <h3 style="text-align:center; color:var(--primary); font-weight:700;">Edit Marker</h3>
+        <input id="editKategori" placeholder="Kategori">
+        <textarea id="editCatatan" rows="4" placeholder="Catatan..."></textarea>
+        <button onclick="updateMarker()">Update</button>
+        <br><br>
+        <button class="btn-danger" onclick="closeEdit()">Tutup</button>
+    </div>
+</div>
+
+<script>
+/* ================= MAP INIT ================= */
+let map = L.map("map").setView([-6.2, 106.8], 12);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+/* preview marker when clicking map to add new */
+let previewMarker = null;
+let selectedLat = null;
+let selectedLng = null;
+
+/* store markers on map keyed by feature id */
+const mapMarkers = {};
+
+/* icons */
+const icons = {
+    "Tempat Penting": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png", iconSize: [32, 32] }),
+    "Lokasi Bahaya": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png", iconSize: [32, 32] }),
+    "Catatan Lapangan": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/green-dot.png", iconSize: [32, 32] }),
+    "Fasilitas Umum": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/orange-dot.png", iconSize: [32, 32] }),
+    "Perumahan": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/purple-dot.png", iconSize: [32, 32] }),
+    "Perkantoran": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/yellow-dot.png", iconSize: [32, 32] }),
+    "Sekolah": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/pink-dot.png", iconSize: [32, 32] }),
+    "Rumah Sakit": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/hospitals.png", iconSize: [32, 32] }),
+    "Lainnya": new L.Icon({ iconUrl: "https://maps.google.com/mapfiles/ms/icons/ltblue-dot.png", iconSize: [32, 32] }),
+};
+
+/* helper: normalize id from different server shapes */
+function normalizeId(ft) {
+    if (!ft) return null;
+    if (typeof ft.id === "string") return ft.id;
+    if (ft.id && typeof ft.id === "object") {
+        if (ft.id.$oid) return ft.id.$oid;
+        if (ft.id["$oid"]) return ft.id["$oid"];
+    }
+    if (ft._id && typeof ft._id === "string") return ft._id;
+    if (ft._id && typeof ft._id === "object") {
+        if (ft._id.$oid) return ft._id.$oid;
+        if (ft._id["$oid"]) return ft._id["$oid"];
+    }
+    return null;
+}
+
+/* helper: safely read coordinates (expect [lng, lat]) */
+function getCoords(ft) {
+    if (!ft || !ft.geometry) return null;
+    const coords = ft.geometry.coordinates;
+    if (!coords) return null;
+    // if already [lng, lat]
+    if (Array.isArray(coords) && typeof coords[0] === "number" && typeof coords[1] === "number") {
+        return coords;
+    }
+    // sometimes backend stores nested or reverse, try common shapes:
+    if (Array.isArray(coords) && Array.isArray(coords[0]) && typeof coords[0][0] === "number" && typeof coords[0][1] === "number") {
+        // coordinates: [[lng, lat]]
+        return coords[0];
+    }
+    return null;
+}
+
+/* small html-escape */
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str).replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[m]));
+}
+
+/* create popup markup */
+function makePopupHtml(name, description, id) {
+    const safeName = name ? name : "Tanpa Kategori";
+    const safeDesc = description ? description : "";
+    return `
+        <div style="min-width:170px;">
+            <b style="color:#08786d;">${escapeHtml(safeName)}</b><br>
+            ${escapeHtml(safeDesc)}<br><br>
+
+            <button onclick="openEdit('${id}')">✏ Edit</button>
+            <button class="btn-danger" onclick="hapus('${id}')">🗑 Delete</button>
+        </div>
+    `;
+}
+
+/* preview marker klik map */
+map.on("click", (e) => {
+    selectedLat = e.latlng.lat;
+    selectedLng = e.latlng.lng;
+
+    if (previewMarker) map.removeLayer(previewMarker);
+
+    previewMarker = L.marker([selectedLat, selectedLng]).addTo(map);
+});
+
+/* notify */
+function showNotif(text) {
+    let notif = document.getElementById("notif");
+    notif.innerText = text;
+    notif.classList.add("show");
+    setTimeout(() => notif.classList.remove("show"), 2500);
+}
+
+/* add a single feature object to the map (defensive) */
+function addFeatureToMap(ft) {
+    try {
+        const coords = getCoords(ft);
+        if (!coords) return; // ignore invalid geometry
+
+        const id = normalizeId(ft) || (Math.random() + "");
+        const properties = ft.properties || ft.props || {};
+        const name = properties.name || properties.kategori || "Lainnya";
+        const description = properties.description || properties.desc || properties.keterangan || "";
+
+        // remove existing marker with same id
+        if (mapMarkers[id]) {
+            map.removeLayer(mapMarkers[id]);
+            delete mapMarkers[id];
+        }
+
+        const icon = icons[name] || icons["Lainnya"];
+        const marker = L.marker([coords[1], coords[0]], { icon }).addTo(map);
+        marker.bindPopup(makePopupHtml(name, description, id));
+        mapMarkers[id] = marker;
+    } catch (err) {
+        console.error("addFeatureToMap error:", err);
+    }
+}
+
+/* load all features */
+function loadAllFeatures() {
+    fetch("http://localhost:8080/api/features")
+    .then(r => r.json())
+    .then(data => {
+        if (!Array.isArray(data)) {
+            console.warn("features endpoint did not return array:", data);
+            return;
+        }
+        data.forEach(ft => {
+            try { addFeatureToMap(ft); } catch (err) { console.error("failed to render feature", ft, err); }
+        });
+    })
+    .catch(err => { console.error("Failed to fetch features:", err); });
+}
+
+/* initial load */
+loadAllFeatures();
+
+/* ------------------ SAVE (POST) ------------------ */
+function simpanMarker() {
+    let kategori = document.getElementById("kategori").value;
+    let catatan = document.getElementById("catatan").value;
+
+    if (!selectedLat || !selectedLng) {
+        return alert("Klik lokasi pada map dulu.");
+    }
+
+    const payload = {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [selectedLng, selectedLat] }, // [lng, lat]
+        properties: { name: kategori, description: catatan }
+    };
+
+    fetch("http://localhost:8080/api/features", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json().catch(() => null))
+    .then(respJson => {
+        let featureToShow = null;
+        if (respJson && (respJson.geometry || respJson.properties || respJson._id || respJson.id)) {
+            // if backend returned created doc
+            featureToShow = respJson;
+            // sometimes backend returns inserted_id only -> fallback below
+        } else {
+            featureToShow = {
+                geometry: payload.geometry,
+                properties: payload.properties,
+                id: (Math.random().toString(36).slice(2))
+            };
+        }
+
+        addFeatureToMap(featureToShow);
+        showNotif("Marker berhasil disimpan!");
+
+        // cleanup
+        if (previewMarker) { map.removeLayer(previewMarker); previewMarker = null; selectedLat = null; selectedLng = null; }
+        document.getElementById("kategori").selectedIndex = 0;
+        document.getElementById("catatan").value = "";
+
+        // sync
+        setTimeout(() => loadAllFeatures(), 800);
+    })
+    .catch(err => {
+        console.error("Failed to save feature:", err);
+        alert("Gagal menyimpan marker. Cek konsol untuk detail.");
+    });
+}
+
+/* ------------------ DELETE ------------------ */
+function hapus(id) {
+    if (!id) { alert("ID tidak tersedia untuk dihapus."); return; }
+    fetch(`http://localhost:8080/api/features/${id}`, { method: "DELETE" })
+    .then(r => {
+        if (!r.ok) throw new Error("delete failed");
+        if (mapMarkers[id]) { map.removeLayer(mapMarkers[id]); delete mapMarkers[id]; }
+        showNotif("Marker dihapus");
+    })
+    .catch(err => {
+        console.error("delete error:", err);
+        alert("Gagal menghapus marker. Cek konsol.");
+    });
+}
+
+/* ------------------ EDIT ------------------ */
+let editID = null;
+
+function openEdit(id) {
+    editID = id;
+    document.getElementById("modalEdit").style.display = "flex";
+
+    // Try fetch authoritative feature from server
+    fetch(`http://localhost:8080/api/features/${id}`)
+    .then(r => {
+        if (!r.ok) throw new Error("not found");
+        return r.json();
+    })
+    .then(ft => {
+        const props = ft.properties || ft.props || {};
+        const name = props.name || props.kategori || "";
+        const description = props.description || props.desc || props.keterangan || "";
+
+        document.getElementById("editKategori").value = name;
+        document.getElementById("editCatatan").value = description;
+    })
+    .catch(err => {
+        console.warn("Fetch single feature failed, trying local marker", err);
+        // fallback: try to read from local marker data if exist
+        if (mapMarkers[id]) {
+            document.getElementById("editKategori").value = "";
+            document.getElementById("editCatatan").value = "";
+        } else {
+            alert("Data feature tidak ditemukan pada server.");
+            closeEdit();
+        }
+    });
+}
+
+function closeEdit() {
+    document.getElementById("modalEdit").style.display = "none";
+    editID = null;
+}
+
+/* Update marker: sends properties and (optionally) geometry with same format as create */
+function updateMarker() {
+    if (!editID) { alert("Tidak ada marker yang dipilih untuk diupdate."); return; }
+
+    const newKategori = document.getElementById("editKategori").value;
+    const newCatatan = document.getElementById("editCatatan").value;
+
+    // Try to keep current geometry if we have the marker locally
+    let geometry = null;
+    if (mapMarkers[editID]) {
+        try {
+            const latlng = mapMarkers[editID].getLatLng();
+            // send same format as create: coordinates: [lng, lat]
+            geometry = { type: "Point", coordinates: [latlng.lng, latlng.lat] };
+        } catch (err) {
+            console.warn("Could not read marker latlng:", err);
+        }
+    }
+
+    // Build body
+    const body = {
+        properties: {
+            name: newKategori,
+            description: newCatatan
+        }
+    };
+    if (geometry) body.geometry = geometry;
+
+    fetch(`http://localhost:8080/api/features/${editID}`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+    })
+    .then(async r => {
+        if (!r.ok) {
+            // try read server message
+            let txt = await r.text().catch(()=>"");
+            throw new Error("update failed: " + (txt || r.status));
+        }
+        // server may return json or empty
+        return r.json().catch(()=>({ updated: true }));
+    })
+    .then(resp => {
+        // update marker on map (if exists)
+        if (mapMarkers[editID]) {
+            const marker = mapMarkers[editID];
+            const latlng = marker.getLatLng();
+            map.removeLayer(marker);
+            delete mapMarkers[editID];
+
+            const icon = icons[newKategori] || icons["Lainnya"];
+            const newMarker = L.marker([latlng.lat, latlng.lng], { icon }).addTo(map);
+            newMarker.bindPopup(makePopupHtml(newKategori, newCatatan, editID));
+            mapMarkers[editID] = newMarker;
+        } else {
+            // fallback reload all
+            loadAllFeatures();
+        }
+
+        showNotif("Marker berhasil diperbarui!");
+        closeEdit();
+        setTimeout(() => loadAllFeatures(), 700);
+    })
+    .catch(err => {
+        console.error("Update failed:", err);
+        alert("Gagal update marker. Cek konsol.");
+    });
+}
+</script>
+
+</body>
+</html>
